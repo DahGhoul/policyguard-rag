@@ -1,0 +1,129 @@
+{
+  "name": "PolicyGuard-RAG · Orquestación de Políticas, Acuses y Alertas (Caso 21)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "policy-events",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-1-webhook",
+      "name": "1. Webhook Eventos PolicyGuard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.event }}",
+                    "rightValue": "RESTRICTED_POLICY_QUERY",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Consulta_Restringida"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.event }}",
+                    "rightValue": "NEW_POLICY_PUBLISHED",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Nueva_Politica"
+            }
+          ]
+        }
+      },
+      "id": "node-2-switch",
+      "name": "2. Switch Tipo de Evento",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://policy-rag-backend:8000/api/v1/rag/ask",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "question", "value": "={{ $json.body.question }}" },
+            { "name": "top_k", "value": "3" }
+          ]
+        }
+      },
+      "id": "node-3-rag-verify",
+      "name": "3. Verificación Pipeline LangChain RAG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO policyrag.audit_log (username, role_code, module, action, entity, entity_id, result, severity, detail) VALUES ('system/n8n', 'system', 'n8n_orchestrator', 'ALERT_RESTRICTED', 'policy', $1, 'SUCCESS', 'warning', $2);",
+        "options": {}
+      },
+      "id": "node-4-postgres-audit",
+      "name": "4. Registrar Alerta en Bitácora SHA-256",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [980, 200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1" }]
+        }
+      },
+      "id": "node-5-cron",
+      "name": "5. Cron Lunes 09:00 (Recordatorio Acuses)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 540]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.username, u.email, u.department, p.code, p.title FROM policyrag.users u CROSS JOIN policyrag.policies p LEFT JOIN policyrag.acknowledgments a ON a.user_id = u.id AND a.policy_id = p.id AND a.version_number = p.current_version WHERE a.id IS NULL AND p.mandatory_ack = TRUE;"
+      },
+      "id": "node-6-pending-acks",
+      "name": "6. Consultar Acuses Pendientes en PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 540]
+    }
+  ],
+  "connections": {
+    "1. Webhook Eventos PolicyGuard": {
+      "main": [[{ "node": "2. Switch Tipo de Evento", "type": "main", "index": 0 }]]
+    },
+    "2. Switch Tipo de Evento": {
+      "main": [
+        [{ "node": "3. Verificación Pipeline LangChain RAG", "type": "main", "index": 0 }],
+        [{ "node": "4. Registrar Alerta en Bitácora SHA-256", "type": "main", "index": 0 }]
+      ]
+    },
+    "3. Verificación Pipeline LangChain RAG": {
+      "main": [[{ "node": "4. Registrar Alerta en Bitácora SHA-256", "type": "main", "index": 0 }]]
+    },
+    "5. Cron Lunes 09:00 (Recordatorio Acuses)": {
+      "main": [[{ "node": "6. Consultar Acuses Pendientes en PostgreSQL", "type": "main", "index": 0 }]]
+    }
+  }
+}

@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PolicyGuard-RAG · Caso 21: Gestor de Políticas con Chat RAG (ISO 27001)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #090d16; color: #f1f5f9; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <div id="app"></div>
+
+  <script>
+    // =====================================================================
+    // ESTADO GLOBAL DE LA APLICACIÓN SPA (PolicyGuard-RAG · Caso 21)
+    // =====================================================================
+    const state = {
+      token: localStorage.getItem('pg_token') || null,
+      user: JSON.parse(localStorage.getItem('pg_user') || 'null'),
+      activeTab: 'dashboard', // dashboard | rag | policies | reports | audit | users
+      summary: null,
+      policies: [],
+      selectedPolicy: null,
+      ragMessages: [
+        {
+          role: 'assistant',
+          text: '¡Hola! Soy el **Agente PolicyGuard-RAG** (impulsado por **LangChain + LangFlow + pgvector**). Pregúntame cualquier duda sobre las políticas ISO 27001 de la organización y te responderé citando el **Artículo y Página exacta**.',
+          citations: [],
+          confidence: 0.99,
+          latency: 14
+        }
+      ],
+      ragHistory: [],
+      auditLogs: [],
+      chainVerify: null,
+      tamperResult: null,
+      usersList: [],
+      loading: false,
+      toast: null,
+      showNewPolicyModal: false
+    };
+
+    function showToast(msg, type = 'success') {
+      state.toast = { msg, type };
+      render();
+      setTimeout(() => { state.toast = null; render(); }, 4500);
+    }
+
+    async function apiFetch(path, options = {}) {
+      const headers = options.headers || {};
+      if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+      if (!(options.body instanceof URLSearchParams) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+      const res = await fetch(path, { ...options, headers });
+      if (res.status === 401) {
+        logout();
+        throw new Error('Sesión expirada o credenciales inválidas');
+      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error en la petición');
+      return data;
+    }
+
+    async function login(username, password) {
+      try {
+        state.loading = true; render();
+        const body = new URLSearchParams({ username, password });
+        const data = await apiFetch('/api/v1/auth/login', { method: 'POST', body });
+        state.token = data.access_token;
+        state.user = data.user;
+        localStorage.setItem('pg_token', data.access_token);
+        localStorage.setItem('pg_user', JSON.stringify(data.user));
+        showToast(`Bienvenido, ${data.user.full_name} (${data.user.roles.join(', ')})`);
+        await loadAllData();
+      } catch (e) {
+        showToast(e.message, 'error');
+      } finally {
+        state.loading = false; render();
+      }
+    }
+
+    function logout() {
+      state.token = null;
+      state.user = null;
+      localStorage.removeItem('pg_token');
+      localStorage.removeItem('pg_user');
+      render();
+    }
+
+    async function loadAllData() {
+      if (!state.token) return;
+      try {
+        const [sum, pols, hist, aud, usrs] = await Promise.all([
+          apiFetch('/api/v1/dashboard/summary'),
+          apiFetch('/api/v1/policies'),
+          apiFetch('/api/v1/rag/history'),
+          apiFetch('/api/v1/audit/logs?limit=40'),
+          apiFetch('/api/v1/users')
+        ]);
+        state.summary = sum;
+        state.policies = pols.items;
+        state.ragHistory = hist.items;
+        state.auditLogs = aud.items;
+        state.usersList = usrs.items;
+        render();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function openPolicyDetail(id) {
+      try {
+        const detail = await apiFetch(`/api/v1/policies/${id}`);
+        state.selectedPolicy = detail;
+        render();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function signAcknowledge(policyId) {
+      try {
+        const res = await apiFetch(`/api/v1/policies/${policyId}/acknowledge`, {
+          method: 'POST',
+          body: JSON.stringify({ comments: 'Lectura completa y conformidad firmada digitalmente desde PolicyGuard-RAG.' })
+        });
+        showToast(`Acuse firmado con éxito. Hash SHA-256: ${res.digital_signature.slice(0, 16)}...`);
+        await loadAllData();
+        if (state.selectedPolicy && state.selectedPolicy.policy.id === policyId) {
+          await openPolicyDetail(policyId);
+        }
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function sendRagQuestion(qText) {
+      if (!qText || !qText.trim()) return;
+      state.ragMessages.push({ role: 'user', text: qText });
+      state.loading = true;
+      render();
+      try {
+        const res = await apiFetch('/api/v1/rag/ask', {
+          method: 'POST',
+          body: JSON.stringify({ question: qText, top_k: 3 })
+        });
+        state.ragMessages.push({
+          role: 'assistant',
+          text: res.answer,
+          citations: res.citations,
+          confidence: res.confidence_score,
+          latency: res.latency_ms,
+          restricted: res.restricted_flagged,
+          n8n: res.n8n_notified
+        });
+        await loadAllData();
+      } catch (e) {
+        showToast(e.message, 'error');
+      } finally {
+        state.loading = false;
+        render();
+      }
+    }
+
+    async function verifyHashChain() {
+      try {
+        const res = await apiFetch('/api/v1/audit/verify-chain');
+        state.chainVerify = res;
+        showToast(`Cadena SHA-256 verificada: ${res.checked_blocks} bloques íntegros (100% inmutable)`);
+        render();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function simulateTamperAttack() {
+      try {
+        const res = await apiFetch('/api/v1/audit/test-immutability', { method: 'POST' });
+        state.tamperResult = res;
+        showToast('¡Trigger de PostgreSQL bloqueó el intento de DELETE en audit_log!', 'success');
+        await loadAllData();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function downloadReport(reportType, format) {
+      try {
+        showToast(`Generando reporte ${reportType.toUpperCase()} en formato ${format.toUpperCase()}...`);
+        const res = await fetch(`/api/v1/reports/export?report_type=${reportType}&format=${format}`, {
+          headers: { 'Authorization': `Bearer ${state.token}` }
+        });
+        if (!res.ok) throw new Error('Error generando el reporte');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `PolicyGuard_${reportType}_${new Date().toISOString().slice(0,10)}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast(`Reporte ${format.toUpperCase()} descargado y registrado en bitácora SHA-256.`);
+        await loadAllData();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function submitNewPolicy(ev) {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const payload = {
+        code: fd.get('code'),
+        title: fd.get('title'),
+        category: fd.get('category'),
+        classification: fd.get('classification'),
+        iso_control: fd.get('iso_control'),
+        version_number: fd.get('version_number'),
+        summary: fd.get('summary'),
+        content_markdown: fd.get('content_markdown'),
+        changelog: fd.get('changelog')
+      };
+      try {
+        const res = await apiFetch('/api/v1/policies', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        state.showNewPolicyModal = false;
+        showToast(res.message);
+        await loadAllData();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    function formatMd(txt) {
+      if (!txt) return '';
+      return txt
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="text-cyan-300 font-semibold">$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em class="text-slate-300">$1</em>')
+        .replace(/\n/g, '<br/>');
+    }
+
+    // =====================================================================
+    // VISTAS DE LA INTERFAZ
+    // =====================================================================
+    function renderLogin() {
+      return `
+        <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-4">
+          <div class="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl p-8 backdrop-blur">
+            <div class="flex items-center gap-3 mb-6">
+              <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-lg">
+                PG
+              </div>
+              <div>
+                <span class="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">Caso 21 · Cartera IA</span>
+                <h1 class="text-2xl font-bold text-white mt-0.5">PolicyGuard-RAG</h1>
+                <p class="text-xs text-slate-400">Gestor de Políticas ISO 27001 con Chatbot RAG y Acuses</p>
+              </div>
+            </div>
+
+            <form onsubmit="event.preventDefault(); login(this.username.value, this.password.value)" class="space-y-4">
+              <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Usuario o Correo Corporativo</label>
+                <input name="username" value="admin" required class="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-white text-sm focus:border-cyan-400 focus:outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Contraseña</label>
+                <input name="password" type="password" value="Admin123!" required class="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-white text-sm focus:border-cyan-400 focus:outline-none" />
+              </div>
+              <button type="submit" class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold text-sm shadow-lg transition">
+                ${state.loading ? 'Autenticando...' : 'Iniciar Sesión Segura (JWT + RBAC)'}
+              </button>
+            </form>
+
+            <div class="mt-6 pt-5 border-t border-slate-800">
+              <p class="text-xs font-semibold text-slate-400 mb-2.5">Acceso Rápido Demo por Rol (1-Clic):</p>
+              <div class="grid grid-cols-2 gap-2 text-xs">
+                <button onclick="login('admin','Admin123!')" class="px-2.5 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-left border border-slate-700">
+                  <div class="font-semibold text-cyan-300">admin</div>
+                  <div class="text-[11px] text-slate-400">Administrador Total</div>
+                </button>
+                <button onclick="login('analista1','Analyst123!')" class="px-2.5 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-left border border-slate-700">
+                  <div class="font-semibold text-emerald-300">analista1</div>
+                  <div class="text-[11px] text-slate-400">Analista GRC / RAG</div>
+                </button>
+                <button onclick="login('gestor','Manager123!')" class="px-2.5 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-left border border-slate-700">
+                  <div class="font-semibold text-amber-300">gestor</div>
+                  <div class="text-[11px] text-slate-400">Gestor / Reportes</div>
+                </button>
+                <button onclick="login('auditor1','Audit123!')" class="px-2.5 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-left border border-slate-700">
+                  <div class="font-semibold text-purple-300">auditor1</div>
+                  <div class="text-[11px] text-slate-400">Auditor SHA-256</div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDashboard() {
+      const s = state.summary;
+      if (!s) return `<div class="p-8 text-slate-400">Cargando indicadores...</div>`;
+      const k = s.kpis;
+      return `
+        <div class="space-y-6">
+          <!-- KPIs Superiores -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Políticas Indexadas (RAG)</p>
+                  <p class="text-3xl font-bold text-white mt-1">${k.total_policies}</p>
+                </div>
+                <span class="px-2.5 py-1 rounded-md text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">${k.total_chunks} Chunks</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-3">${k.total_versions} versiones controladas con SHA-256</p>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Adopción Global (Acuses)</p>
+                  <p class="text-3xl font-bold text-emerald-400 mt-1">${k.global_adoption_pct}%</p>
+                </div>
+                <span class="px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">${k.total_acknowledgments} Firmas</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-3">Cumplimiento ISO/IEC 27001 Control A.5.1</p>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Consultas Chatbot RAG</p>
+                  <p class="text-3xl font-bold text-indigo-400 mt-1">${k.total_rag_queries}</p>
+                </div>
+                <span class="px-2.5 py-1 rounded-md text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">${k.avg_confidence_pct}% Confianza</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-3">Latencia media de búsqueda: <strong class="text-slate-200">${k.avg_latency_ms} ms</strong></p>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Tus Acuses Pendientes</p>
+                  <p class="text-3xl font-bold ${k.user_pending_acks > 0 ? 'text-amber-400' : 'text-emerald-400'} mt-1">${k.user_pending_acks}</p>
+                </div>
+                <button onclick="state.activeTab='policies';render();" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30">
+                  Ver Catálogo →
+                </button>
+              </div>
+              <p class="text-xs text-slate-400 mt-3">Firma digital obligatoria por versión publicada</p>
+            </div>
+          </div>
+
+          <!-- Gráficos de Adopción por Política y por Departamento -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Tasa de Adopción y Acuses de Recibo por Política</h3>
+                  <p class="text-xs text-slate-400">Porcentaje de colaboradores que firmaron la versión vigente</p>
+                </div>
+                <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">Meta: 100%</span>
+              </div>
+              <div class="space-y-4">
+                ${s.adoption_by_policy.map(p => `
+                  <div>
+                    <div class="flex justify-between text-xs mb-1">
+                      <span class="font-medium text-slate-200"><strong class="text-cyan-400 mono">${p.code}</strong> (v${p.version}) · ${p.title.slice(0,48)}...</span>
+                      <span class="font-semibold text-emerald-400">${p.acknowledged}/${k.total_users} (${p.adoption_pct}%)</span>
+                    </div>
+                    <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                      <div class="h-full bg-gradient-to-r from-cyan-500 to-emerald-500 rounded-full" style="width: ${p.adoption_pct}%"></div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Mapa de Cumplimiento Normativo por Departamento</h3>
+                  <p class="text-xs text-slate-400">Acuses firmados vs. meta departamental (ISO 27001 A.6.3)</p>
+                </div>
+              </div>
+              <div class="space-y-3.5">
+                ${s.adoption_by_department.map(d => `
+                  <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                    <div>
+                      <div class="text-xs font-semibold text-white">${d.department}</div>
+                      <div class="text-[11px] text-slate-400">${d.users} colaborador(es) · ${d.acknowledgments}/${d.target} acuses</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <div class="w-28 h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div class="h-full ${d.compliance_pct >= 75 ? 'bg-emerald-500' : 'bg-amber-500'}" style="width: ${d.compliance_pct}%"></div>
+                      </div>
+                      <span class="text-xs font-bold mono w-12 text-right ${d.compliance_pct >= 75 ? 'text-emerald-400' : 'text-amber-400'}">${d.compliance_pct}%</span>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+
+          <!-- Últimas Consultas al Chatbot RAG -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-sm font-bold text-white">Consultas Recientes al Asistente RAG (Explicabilidad XAI y Citas)</h3>
+                <p class="text-xs text-slate-400">Monitoreo en tiempo real de dudas normativas y alertas n8n por políticas restringidas</p>
+              </div>
+              <button onclick="state.activeTab='rag';render();" class="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold hover:bg-cyan-500/30">
+                Ir al Chatbot RAG →
+              </button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th class="pb-2">Usuario</th>
+                    <th class="pb-2">Departamento</th>
+                    <th class="pb-2">Pregunta Realizada</th>
+                    <th class="pb-2">Confianza</th>
+                    <th class="pb-2">Latencia</th>
+                    <th class="pb-2">Alerta n8n</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800/60">
+                  ${s.recent_queries.map(q => `
+                    <tr class="hover:bg-slate-800/40">
+                      <td class="py-2.5 font-medium text-cyan-300 mono">${q.username}</td>
+                      <td class="py-2.5 text-slate-300">${q.department || '-'}</td>
+                      <td class="py-2.5 text-slate-200">${q.question}</td>
+                      <td class="py-2.5"><span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-semibold">${Math.round(q.confidence_score * 100)}%</span></td>
+                      <td class="py-2.5 text-slate-400 mono">${q.latency_ms} ms</td>
+                      <td class="py-2.5">
+                        ${q.restricted_flagged
+                          ? '<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold">RESTRICTED · n8n Notificado</span>'
+                          : '<span class="text-slate-500">Normal</span>'}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRagChat() {
+      const sampleQuestions = [
+        '¿Cuántos caracteres como mínimo debe tener mi contraseña y cuándo se bloquea la cuenta?',
+        '¿Qué debo hacer si detecto Ransomware en mi PC? ¿Debo apagar la computadora?',
+        '¿En cuánto tiempo se deben revocar los accesos cuando un trabajador renuncia o cesa?',
+        '¿Puedo conectarme al Wi-Fi de un aeropuerto o cafetería para trabajar?',
+        '¿Puedo subir contratos con DNI de clientes a ChatGPT para resumirlos?',
+        '¿Qué algoritmos de cifrado están autorizados y por cuántos años se guardan las bitácoras?'
+      ];
+
+      return `
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Columna Izquierda: Chat Interactivo con Citas -->
+          <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl flex flex-col h-[650px]">
+            <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50 rounded-t-xl">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white">IA</div>
+                <div>
+                  <h3 class="text-sm font-bold text-white">Asistente Normativo PolicyGuard-RAG (LangChain + LangFlow)</h3>
+                  <p class="text-[11px] text-slate-400">Recuperación Semántica sobre PostgreSQL · Cita obligatoria de Artículo y Página (XAI)</p>
+                </div>
+              </div>
+              <span class="px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Motor RAG Activo</span>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-box">
+              ${state.ragMessages.map(m => `
+                <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
+                  <div class="max-w-2xl rounded-2xl p-4 ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-950 border border-slate-800 text-slate-200'}">
+                    <div class="text-xs leading-relaxed">${formatMd(m.text)}</div>
+                    ${m.citations && m.citations.length > 0 ? `
+                      <div class="mt-3 pt-3 border-t border-slate-800 space-y-2">
+                        <div class="flex items-center justify-between">
+                          <span class="text-[11px] font-bold uppercase tracking-wider text-cyan-400">Fuentes Normativas Citadas (Explicabilidad):</span>
+                          <span class="text-[11px] text-slate-400 mono">Confianza: ${Math.round((m.confidence||0.95)*100)}% · ${m.latency||30} ms</span>
+                        </div>
+                        ${m.citations.map(c => `
+                          <div class="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs">
+                            <div class="flex items-center justify-between font-semibold text-cyan-300">
+                              <span>📄 ${c.policy_code} (v${c.version}) · ${c.article_ref} — Página ${c.page_number}</span>
+                              <span class="px-1.5 py-0.5 rounded bg-cyan-500/15 text-[10px] mono">Similitud: ${Math.round(c.score * 100)}%</span>
+                            </div>
+                            <div class="text-[11px] text-slate-300 mt-1 italic">"${c.excerpt}"</div>
+                          </div>
+                        `).join('')}
+                        ${m.restricted ? `
+                          <div class="p-2 rounded bg-rose-500/15 border border-rose-500/30 text-[11px] text-rose-300 font-medium">
+                            ⚡ Flujo n8n Disparado: Esta consulta involucra una política clasificada como <strong>RESTRICTED</strong>. Se registró alerta de gobernanza.
+                          </div>
+                        ` : ''}
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <form onsubmit="event.preventDefault(); const val = this.q.value; this.q.value=''; sendRagQuestion(val);" class="p-3 border-t border-slate-800 bg-slate-950/60 flex gap-2 rounded-b-xl">
+              <input name="q" placeholder="Escribe tu pregunta sobre cualquier política ISO 27001 (ej. ¿Cuál es la longitud mínima de contraseña?)..." required class="flex-1 px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:border-cyan-400 focus:outline-none" />
+              <button type="submit" class="px-5 py-2.5 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-xs font-semibold hover:opacity-95">
+                ${state.loading ? 'Consultando RAG...' : 'Preguntar con Cita'}
+              </button>
+            </form>
+          </div>
+
+          <!-- Columna Derecha: Preguntas de Demostración en 1 Clic -->
+          <div class="space-y-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <h3 class="text-sm font-bold text-white mb-1">Preguntas Listas para tu Demo (1-Clic)</h3>
+              <p class="text-xs text-slate-400 mb-3">Haz clic en cualquiera para demostrar en vivo cómo el RAG cita el Artículo y Página exacta:</p>
+              <div class="space-y-2">
+                ${sampleQuestions.map(sq => `
+                  <button onclick="sendRagQuestion('${sq}')" class="w-full text-left p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs text-slate-200 transition flex items-start gap-2">
+                    <span class="text-cyan-400 font-bold">›</span>
+                    <span>${sq}</span>
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <h3 class="text-sm font-bold text-white mb-2">Arquitectura del Pipeline RAG (LangChain + LangFlow)</h3>
+              <ol class="text-xs text-slate-300 space-y-2 list-decimal list-inside">
+                <li><strong>Ingesta y Chunking:</strong> División automática por artículos normativos y páginas.</li>
+                <li><strong>Indexación PostgreSQL:</strong> Almacenamiento de vectores y palabras clave ponderadas.</li>
+                <li><strong>Retrieval & Reranking:</strong> Cálculo de similitud semántica Top-K.</li>
+                <li><strong>Síntesis XAI:</strong> Respuesta con cita obligatoria <code>[Código · Artículo · Página]</code>.</li>
+                <li><strong>Orquestación n8n:</strong> Notificación automática si se consulta política <code>RESTRICTED</code>.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPolicies() {
+      const canWrite = state.user && (state.user.roles.includes('admin') || state.user.roles.includes('analista'));
+      return `
+        <div class="space-y-6">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 class="text-lg font-bold text-white">Catálogo de Políticas Corporativas, Versiones y Acuses Digitales</h2>
+              <p class="text-xs text-slate-400">Cumplimiento ISO/IEC 27001:2022 Control A.5.1 · Firma electrónica con hash SHA-256</p>
+            </div>
+            ${canWrite ? `
+              <button onclick="state.showNewPolicyModal=true;render();" class="px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-xs font-semibold shadow-lg">
+                + Publicar / Versionar Política (Auto-Indexa RAG)
+              </button>
+            ` : ''}
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            ${state.policies.map(p => `
+              <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between hover:border-slate-700 transition">
+                <div>
+                  <div class="flex items-center justify-between gap-2 mb-2">
+                    <span class="px-2.5 py-0.5 rounded text-xs font-bold mono bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">${p.code} · v${p.current_version}</span>
+                    <span class="px-2 py-0.5 rounded text-[11px] font-semibold ${p.classification === 'RESTRICTED' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : p.classification === 'CONFIDENTIAL' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${p.classification}</span>
+                  </div>
+                  <h3 class="text-sm font-bold text-white">${p.title}</h3>
+                  <p class="text-xs text-slate-400 mt-1.5">${p.summary}</p>
+                  <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-400">
+                    <span class="px-2 py-0.5 rounded bg-slate-950 border border-slate-800">🛡️ ${p.iso_control}</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-950 border border-slate-800">🧩 ${p.total_chunks} Chunks RAG</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-950 border border-slate-800">✍️ ${p.ack_count}/${p.total_users} Acuses (${p.adoption_pct}%)</span>
+                  </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
+                  <button onclick="openPolicyDetail(${p.id})" class="text-xs font-semibold text-cyan-400 hover:text-cyan-300">
+                    Ver Texto Completo, Chunks y Versiones →
+                  </button>
+                  ${p.acknowledged_by_me ? `
+                    <span class="px-2.5 py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
+                      ✓ Acuse Firmado
+                    </span>
+                  ` : `
+                    <button onclick="signAcknowledge(${p.id})" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow">
+                      Firmar Acuse de Recibo
+                    </button>
+                  `}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          ${state.selectedPolicy ? `
+            <div class="bg-slate-900 border-2 border-cyan-500/40 rounded-xl p-6 space-y-5">
+              <div class="flex items-start justify-between">
+                <div>
+                  <span class="text-xs font-bold mono text-cyan-400">${state.selectedPolicy.policy.code} · Versión Vigente v${state.selectedPolicy.policy.current_version}</span>
+                  <h3 class="text-lg font-bold text-white mt-0.5">${state.selectedPolicy.policy.title}</h3>
+                  <p class="text-xs text-slate-400">Control: ${state.selectedPolicy.policy.iso_control} · Responsable: ${state.selectedPolicy.policy.owner_department}</p>
+                </div>
+                <button onclick="state.selectedPolicy=null;render();" class="px-3 py-1 rounded bg-slate-800 text-slate-300 text-xs">Cerrar Detalle ✕</button>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Fragmentos Indexados en Motor RAG (Chunks con Página):</h4>
+                  <div class="space-y-2.5">
+                    ${state.selectedPolicy.chunks.map(c => `
+                      <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs">
+                        <div class="flex justify-between font-semibold text-cyan-300 mb-1">
+                          <span>${c.article_ref} · ${c.section_title}</span>
+                          <span class="mono text-[11px] text-slate-400">Pág. ${c.page_number} (${c.token_count} tokens)</span>
+                        </div>
+                        <p class="text-slate-300 leading-relaxed">${c.content}</p>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+
+                <div class="space-y-4">
+                  <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Historial de Versiones (${state.selectedPolicy.versions.length}):</h4>
+                    <div class="space-y-2">
+                      ${state.selectedPolicy.versions.map(v => `
+                        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs flex justify-between items-center">
+                          <div>
+                            <div class="font-semibold text-white">Versión v${v.version_number} ${v.is_current ? '<span class="ml-2 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">VIGENTE</span>' : '<span class="ml-2 px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">HISTÓRICA</span>'}</div>
+                            <div class="text-slate-400 mt-0.5">${v.changelog}</div>
+                            <div class="mono text-[10px] text-slate-500 mt-1">SHA-256: ${v.file_checksum_sha256.slice(0,32)}...</div>
+                          </div>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Evidencias de Acuse de Recibo Firmados (${state.selectedPolicy.acknowledgments.length}):</h4>
+                    <div class="max-h-56 overflow-y-auto space-y-1.5">
+                      ${state.selectedPolicy.acknowledgments.map(a => `
+                        <div class="p-2.5 rounded bg-slate-950 border border-slate-800 text-xs flex justify-between items-center">
+                          <div>
+                            <div class="font-medium text-emerald-300">${a.full_name} <span class="text-slate-400">(${a.department})</span></div>
+                            <div class="text-[10px] text-slate-500 mono">Firma SHA-256: ${a.digital_signature.slice(0,28)}...</div>
+                          </div>
+                          <span class="text-[11px] text-slate-400 mono">v${a.version_number}</span>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function renderReports() {
+      const types = [
+        { id: 'compliance', title: 'Reporte Gerencial de Cumplimiento ISO 27001', desc: 'Incluye catálogo de políticas vigentes, tasas de adopción por departamento, acuses firmados y resumen ejecutivo.' },
+        { id: 'operational', title: 'Reporte Operacional del Motor RAG y Consultas', desc: 'Detalle de consultas atendidas por el Chatbot RAG, nivel de confianza, latencia y artículos más consultados.' },
+        { id: 'audit', title: 'Reporte Forense de Bitácora Inmutable (SHA-256)', desc: 'Extracto completo de eventos de seguridad con sus hashes criptográficos encadenados para auditorías externas.' }
+      ];
+      return `
+        <div class="space-y-6">
+          <div>
+            <h2 class="text-lg font-bold text-white">Centro de Exportación de Reportes Oficiales (PDF, Word y Excel)</h2>
+            <p class="text-xs text-slate-400">Cada reporte generado calcula automáticamente su firma SHA-256 y queda registrado en la bitácora de auditoría</p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            ${types.map(t => `
+              <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+                <div>
+                  <span class="px-2.5 py-0.5 rounded text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 uppercase">${t.id}</span>
+                  <h3 class="text-base font-bold text-white mt-2">${t.title}</h3>
+                  <p class="text-xs text-slate-400 mt-2 leading-relaxed">${t.desc}</p>
+                </div>
+                <div class="mt-6 pt-4 border-t border-slate-800 grid grid-cols-3 gap-2">
+                  <button onclick="downloadReport('${t.id}','pdf')" class="py-2 px-3 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-semibold">
+                    📄 PDF
+                  </button>
+                  <button onclick="downloadReport('${t.id}','docx')" class="py-2 px-3 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-semibold">
+                    📝 Word
+                  </button>
+                  <button onclick="downloadReport('${t.id}','xlsx')" class="py-2 px-3 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
+                    📊 Excel
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAudit() {
+      return `
+        <div class="space-y-6">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 class="text-lg font-bold text-white">Bitácora Forense Inmutable con Cadena de Bloques SHA-256</h2>
+              <p class="text-xs text-slate-400">Protegida a nivel de motor PostgreSQL mediante Trigger <code>trg_audit_log_no_update_delete</code> (ISO/IEC 27001 A.8.15)</p>
+            </div>
+            <div class="flex gap-3">
+              <button onclick="verifyHashChain()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg">
+                🔗 Verificar Cadena Criptográfica SHA-256
+              </button>
+              <button onclick="simulateTamperAttack()" class="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg">
+                🛡️ Probar Inmutabilidad (Intentar DELETE en BD)
+              </button>
+            </div>
+          </div>
+
+          ${state.chainVerify ? `
+            <div class="p-4 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-xs space-y-1">
+              <div class="font-bold text-emerald-300 text-sm">✓ CADENA DE BLOQUES SHA-256 100% ÍNTEGRA (${state.chainVerify.checked_blocks} bloques verificados)</div>
+              <div class="text-slate-300">Estándar: ${state.chainVerify.standard} · Enlaces rotos: <strong>${state.chainVerify.broken_links.length}</strong></div>
+              <div class="mono text-[11px] text-emerald-400">Último Hash de Bloque: ${state.chainVerify.last_block_hash}</div>
+            </div>
+          ` : ''}
+
+          ${state.tamperResult ? `
+            <div class="p-4 rounded-xl bg-rose-950/60 border border-rose-500/50 text-xs space-y-1">
+              <div class="font-bold text-rose-300 text-sm">🛡️ ${state.tamperResult.message}</div>
+              <div class="text-slate-300">Trigger activado: <code class="text-amber-300">${state.tamperResult.trigger_name}</code></div>
+              <div class="mono text-[11px] text-rose-200 bg-slate-950 p-2 rounded mt-1">Respuesta de PostgreSQL: ${state.tamperResult.postgres_exception}</div>
+            </div>
+          ` : ''}
+
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-950 text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th class="p-3">ID</th>
+                    <th class="p-3">Fecha / Hora UTC</th>
+                    <th class="p-3">Usuario / Rol</th>
+                    <th class="p-3">Módulo · Acción</th>
+                    <th class="p-3">Detalle del Evento</th>
+                    <th class="p-3">Hash Previo → Hash Propio (SHA-256)</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800/60">
+                  ${state.auditLogs.map(a => `
+                    <tr class="hover:bg-slate-800/40">
+                      <td class="p-3 mono font-bold text-slate-300">#${a.id}</td>
+                      <td class="p-3 mono text-[11px] text-slate-400">${new Date(a.occurred_at).toISOString().replace('T',' ').slice(0,19)}</td>
+                      <td class="p-3"><span class="font-semibold text-cyan-300">${a.username}</span> <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">${a.role_code || ''}</span></td>
+                      <td class="p-3"><span class="px-2 py-0.5 rounded font-semibold ${a.severity === 'critical' ? 'bg-rose-500/20 text-rose-300' : a.severity === 'warning' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-200'}">${a.module} : ${a.action}</span></td>
+                      <td class="p-3 text-slate-200">${a.detail || ''}</td>
+                      <td class="p-3 mono text-[10px] text-emerald-400">${(a.hash_prev||'').slice(0,10)}... → ${(a.hash_self||'').slice(0,14)}...</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderUsers() {
+      return `
+        <div class="space-y-6">
+          <div>
+            <h2 class="text-lg font-bold text-white">Control de Acceso Basado en Roles (RBAC) y Usuarios Corporativos</h2>
+            <p class="text-xs text-slate-400">Roles obligatorios de la Plataforma Común: Administrador, Analista, Gestor, Auditor y Colaborador</p>
+          </div>
+
+          <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950 text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th class="p-3">ID</th>
+                  <th class="p-3">Usuario</th>
+                  <th class="p-3">Nombre Completo</th>
+                  <th class="p-3">Departamento / Cargo</th>
+                  <th class="p-3">Roles RBAC</th>
+                  <th class="p-3">Acuses Firmados</th>
+                  <th class="p-3">Estado</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                ${state.usersList.map(u => `
+                  <tr class="hover:bg-slate-800/40">
+                    <td class="p-3 mono text-slate-400">#${u.id}</td>
+                    <td class="p-3 mono font-semibold text-cyan-300">${u.username}</td>
+                    <td class="p-3 font-medium text-white">${u.full_name}<div class="text-[11px] text-slate-400">${u.email}</div></td>
+                    <td class="p-3 text-slate-300">${u.department}<div class="text-[11px] text-slate-500">${u.job_title || ''}</div></td>
+                    <td class="p-3">${(u.roles || []).map(r => `<span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">${r}</span>`).join(' ')}</td>
+                    <td class="p-3 font-bold text-emerald-400">${u.acks_signed} / ${state.policies.length}</td>
+                    <td class="p-3"><span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300">Activo</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNewPolicyModal() {
+      if (!state.showNewPolicyModal) return '';
+      return `
+        <div class="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
+          <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 space-y-4">
+            <div class="flex justify-between items-center">
+              <h3 class="text-base font-bold text-white">Publicar o Versionar Política Normativa (Indexación Automática RAG)</h3>
+              <button onclick="state.showNewPolicyModal=false;render();" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <form onsubmit="submitNewPolicy(event)" class="space-y-3 text-xs">
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-slate-300 mb-1">Código (Ej: POL-SEG-006)</label>
+                  <input name="code" value="POL-SEG-006" required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white" />
+                </div>
+                <div>
+                  <label class="block text-slate-300 mb-1">Versión</label>
+                  <input name="version_number" value="1.0" required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white" />
+                </div>
+                <div>
+                  <label class="block text-slate-300 mb-1">Clasificación</label>
+                  <select name="classification" class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white">
+                    <option value="INTERNAL">INTERNAL</option>
+                    <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+                    <option value="RESTRICTED">RESTRICTED</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-slate-300 mb-1">Título de la Política</label>
+                  <input name="title" value="Política de Copias de Respaldo (Backups 3-2-1) y Recuperación" required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white" />
+                </div>
+                <div>
+                  <label class="block text-slate-300 mb-1">Control ISO 27001</label>
+                  <input name="iso_control" value="ISO 27001 A.8.13 (Copias de seguridad)" required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white" />
+                </div>
+              </div>
+              <input type="hidden" name="category" value="Continuidad y Respaldo" />
+              <div>
+                <label class="block text-slate-300 mb-1">Resumen Ejecutivo</label>
+                <input name="summary" value="Establece la regla 3-2-1 de respaldos inmutables y pruebas trimestrales de restauración." required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white" />
+              </div>
+              <div>
+                <label class="block text-slate-300 mb-1">Contenido Normativo (Usa '## Artículo X' para dividir en Chunks automáticamente)</label>
+                <textarea name="content_markdown" rows="6" required class="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-white mono">## Artículo 1. Regla 3-2-1 de Copias de Seguridad (Página 1)
+Toda base de datos crítica debe mantener 3 copias de los datos, en 2 medios de almacenamiento distintos y 1 copia inmutable fuera del sitio (off-site) con cifrado AES-256.
+
+## Artículo 2. Pruebas de Restauración y RPO/RTO (Página 2)
+El equipo de TI debe ejecutar pruebas de restauración trimestrales documentadas. El RPO máximo para bases de datos transaccionales es de 15 minutos y el RTO máximo es de 2 horas.</textarea>
+              </div>
+              <input type="hidden" name="changelog" value="Emisión e indexación automática en motor RAG." />
+              <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="state.showNewPolicyModal=false;render();" class="px-4 py-2 rounded bg-slate-800 text-slate-300">Cancelar</button>
+                <button type="submit" class="px-5 py-2 rounded bg-cyan-500 text-slate-950 font-bold">Publicar e Indexar en RAG</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      const root = document.getElementById('app');
+      if (!state.token || !state.user) {
+        root.innerHTML = renderLogin();
+        return;
+      }
+
+      const tabs = [
+        { id: 'dashboard', label: '📊 Dashboard Adopción' },
+        { id: 'rag', label: '🤖 Chatbot RAG (Citas)' },
+        { id: 'policies', label: '📜 Políticas y Acuses' },
+        { id: 'reports', label: '📥 Reportes (PDF/Word/Excel)' },
+        { id: 'audit', label: '⛓️ Bitácora SHA-256' },
+        { id: 'users', label: '👥 Usuarios y RBAC' }
+      ];
+
+      let contentHtml = '';
+      if (state.activeTab === 'dashboard') contentHtml = renderDashboard();
+      else if (state.activeTab === 'rag') contentHtml = renderRagChat();
+      else if (state.activeTab === 'policies') contentHtml = renderPolicies();
+      else if (state.activeTab === 'reports') contentHtml = renderReports();
+      else if (state.activeTab === 'audit') contentHtml = renderAudit();
+      else if (state.activeTab === 'users') contentHtml = renderUsers();
+
+      root.innerHTML = `
+        ${state.toast ? `
+          <div class="fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl shadow-2xl border text-xs font-semibold ${state.toast.type === 'error' ? 'bg-rose-950 border-rose-500 text-rose-200' : 'bg-slate-900 border-cyan-400 text-cyan-200'}">
+            ${state.toast.msg}
+          </div>
+        ` : ''}
+
+        <header class="bg-slate-950/90 border-b border-slate-800 sticky top-0 z-30 backdrop-blur">
+          <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow">PG</div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-white text-sm">PolicyGuard-RAG</span>
+                  <span class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold">Caso 21 · ISO 27001 A.5.1</span>
+                </div>
+                <p class="text-[11px] text-slate-400">Gestor de Políticas con Chatbot RAG, Versionado y Acuses Digitales</p>
+              </div>
+            </div>
+
+            <nav class="flex flex-wrap gap-1">
+              ${tabs.map(t => `
+                <button onclick="state.activeTab='${t.id}';render();" class="px-3 py-1.5 rounded-lg text-xs font-medium transition ${state.activeTab === t.id ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-white hover:bg-slate-900'}">
+                  ${t.label}
+                </button>
+              `).join('')}
+            </nav>
+
+            <div class="flex items-center gap-3">
+              <div class="text-right">
+                <div class="text-xs font-semibold text-white">${state.user.full_name}</div>
+                <div class="text-[10px] text-cyan-400 uppercase font-semibold">${state.user.roles.join(', ')} · ${state.user.department}</div>
+              </div>
+              <button onclick="logout()" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-300 text-xs border border-slate-700">
+                Salir
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main class="max-w-7xl w-full mx-auto px-4 py-6 flex-1">
+          ${contentHtml}
+        </main>
+
+        ${renderNewPolicyModal()}
+      `;
+    }
+
+    // Inicialización automática
+    render();
+    if (state.token) loadAllData();
+  </script>
+</body>
+</html>

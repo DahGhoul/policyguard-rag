@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: policy-rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: policyrag
+      POSTGRES_PASSWORD: policyrag
+      POSTGRES_DB: policyrag
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    networks:
+      - policy-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: policy-rag-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    networks:
+      - policy-net
+
+  backend:
+    build:
+      context: ./backend
+    image: policy-rag-backend:latest
+    container_name: policy-rag-backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: policy-rag-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: policyrag
+      POSTGRES_PASSWORD: policyrag
+      POSTGRES_DB: policyrag
+      SECRET_KEY: policyguard-rag-super-secret-jwt-key-2026-iso27001
+    ports:
+      - "8002:8000"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - policy-net
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: policy-rag-frontend
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - policy-net
+
+networks:
+  policy-net:
+    name: policy-net
+    driver: bridge

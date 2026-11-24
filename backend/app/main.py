@@ -315,6 +315,35 @@ async def health_check():
     }
 
 
+@app.get("/api/v1/ml/benchmark", tags=["Laboratorio ML / Optuna"])
+async def get_ml_benchmark():
+    """Retorna métricas reales de Optuna TPE, Validación Cruzada 5-Fold y XAI."""
+    candidates = [
+        Path("/app/experiments/out_v2/results_optuna_caso21.json"),
+        Path(__file__).resolve().parents[2] / "experiments" / "out_v2" / "results_optuna_caso21.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    raise HTTPException(status_code=404, detail="Resultados de benchmark Optuna no encontrados")
+
+
+@app.get("/api/v1/ml/figures/{filename}", tags=["Laboratorio ML / Optuna"])
+async def get_ml_figure(filename: str):
+    """Sirve las figuras PNG de 400 DPI en fondo blanco."""
+    safe_name = Path(filename).name
+    if not safe_name.endswith(".png") or safe_name != filename:
+        raise HTTPException(status_code=400, detail="Nombre de figura inválido")
+    candidates = [
+        Path("/app/experiments/out_v2/figures") / safe_name,
+        Path(__file__).resolve().parents[2] / "experiments" / "out_v2" / "figures" / safe_name,
+    ]
+    for p in candidates:
+        if p.exists() and p.is_file():
+            return FileResponse(str(p), media_type="image/png")
+    raise HTTPException(status_code=404, detail="Figura no encontrada")
+
+
 # ---------------------------------------------------------------------
 # AUTH
 # ---------------------------------------------------------------------

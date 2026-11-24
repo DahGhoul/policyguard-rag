@@ -1,0 +1,228 @@
+{
+  "dataset_info": {
+    "n_policies": 5,
+    "n_chunks": 16,
+    "n_queries": 60,
+    "n_pairs": 960,
+    "split": {
+      "train": 672,
+      "val": 144,
+      "test": 144
+    }
+  },
+  "best_params": {
+    "Regresión Logística": {
+      "C": 0.0745934328572655,
+      "class_weight": null
+    },
+    "Random Forest": {
+      "n_estimators": 150,
+      "max_depth": 14,
+      "min_samples_split": 8,
+      "min_samples_leaf": 3
+    },
+    "HistGradientBoosting": {
+      "learning_rate": 0.03338755504130913,
+      "max_iter": 300,
+      "max_depth": 7,
+      "l2_regularization": 0.09846738873614563
+    },
+    "PolicyGuard-RAG Optuna": {
+      "w_lr": 0.3621780831931538,
+      "w_gb": 0.7655000144869414,
+      "w_app": 0.6123957592679836,
+      "w_bm25": 0.2993292420985183
+    }
+  },
+  "test_metrics": {
+    "Regresión Logística": {
+      "F1": 0.8,
+      "AUC_ROC": 0.9967,
+      "PR_AUC": 0.9599,
+      "LogLoss": 0.1048,
+      "Brier": 0.0287,
+      "Hit@1": 0.7778,
+      "Recall@3": 1.0,
+      "MRR": 0.8889,
+      "nDCG@3": 0.7722
+    },
+    "Random Forest": {
+      "F1": 0.8421,
+      "AUC_ROC": 0.9967,
+      "PR_AUC": 0.9599,
+      "LogLoss": 0.037,
+      "Brier": 0.0131,
+      "Hit@1": 0.7778,
+      "Recall@3": 1.0,
+      "MRR": 0.8889,
+      "nDCG@3": 0.7456
+    },
+    "HistGradientBoosting": {
+      "F1": 0.9,
+      "AUC_ROC": 0.9971,
+      "PR_AUC": 0.9536,
+      "LogLoss": 0.05,
+      "Brier": 0.0147,
+      "Hit@1": 0.8889,
+      "Recall@3": 1.0,
+      "MRR": 0.9444,
+      "nDCG@3": 0.8034
+    },
+    "PolicyGuard-RAG Optuna": {
+      "F1": 0.8421,
+      "AUC_ROC": 0.9975,
+      "PR_AUC": 0.9675,
+      "LogLoss": 0.0898,
+      "Brier": 0.0149,
+      "Hit@1": 0.7778,
+      "Recall@3": 1.0,
+      "MRR": 0.8889,
+      "nDCG@3": 0.7778
+    }
+  },
+  "cv_summary": {
+    "Regresión Logística": {
+      "AUC_ROC": {
+        "mean": 0.9994,
+        "std": 0.001
+      },
+      "PR_AUC": {
+        "mean": 0.9912,
+        "std": 0.0141
+      },
+      "MRR": {
+        "mean": 0.975,
+        "std": 0.0373
+      },
+      "nDCG@3": {
+        "mean": 0.8416,
+        "std": 0.0205
+      },
+      "Recall@3": {
+        "mean": 1.0,
+        "std": 0.0
+      }
+    },
+    "Random Forest": {
+      "AUC_ROC": {
+        "mean": 0.9994,
+        "std": 0.0009
+      },
+      "PR_AUC": {
+        "mean": 0.9917,
+        "std": 0.0117
+      },
+      "MRR": {
+        "mean": 0.975,
+        "std": 0.0373
+      },
+      "nDCG@3": {
+        "mean": 0.8378,
+        "std": 0.0412
+      },
+      "Recall@3": {
+        "mean": 1.0,
+        "std": 0.0
+      }
+    },
+    "HistGradientBoosting": {
+      "AUC_ROC": {
+        "mean": 0.9995,
+        "std": 0.0007
+      },
+      "PR_AUC": {
+        "mean": 0.9925,
+        "std": 0.0101
+      },
+      "MRR": {
+        "mean": 0.9833,
+        "std": 0.0228
+      },
+      "nDCG@3": {
+        "mean": 0.8193,
+        "std": 0.0321
+      },
+      "Recall@3": {
+        "mean": 1.0,
+        "std": 0.0
+      }
+    },
+    "PolicyGuard-RAG Optuna": {
+      "AUC_ROC": {
+        "mean": 0.9994,
+        "std": 0.001
+      },
+      "PR_AUC": {
+        "mean": 0.9912,
+        "std": 0.0141
+      },
+      "MRR": {
+        "mean": 0.975,
+        "std": 0.0373
+      },
+      "nDCG@3": {
+        "mean": 0.8345,
+        "std": 0.0187
+      },
+      "Recall@3": {
+        "mean": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  "feature_importance_xai": [
+    {
+      "feature": "x3_bm25_norm",
+      "importance_mean": 0.6144,
+      "importance_std": 0.0966
+    },
+    {
+      "feature": "x6_jaccard",
+      "importance_mean": 0.0659,
+      "importance_std": 0.0285
+    },
+    {
+      "feature": "x2_tfidf_cosine",
+      "importance_mean": 0.0393,
+      "importance_std": 0.0591
+    },
+    {
+      "feature": "x1_app_hybrid",
+      "importance_mean": 0.0134,
+      "importance_std": 0.0025
+    },
+    {
+      "feature": "x5_title_overlap",
+      "importance_mean": 0.0,
+      "importance_std": 0.0
+    },
+    {
+      "feature": "x4_kw_overlap",
+      "importance_mean": -0.0015,
+      "importance_std": 0.0003
+    },
+    {
+      "feature": "x7_len_ratio",
+      "importance_mean": -0.0063,
+      "importance_std": 0.009
+    }
+  ],
+  "inference_latency_ms": {
+    "Regresión Logística": {
+      "median_ms": 0.71,
+      "p95_ms": 0.926
+    },
+    "Random Forest": {
+      "median_ms": 17.377,
+      "p95_ms": 29.061
+    },
+    "HistGradientBoosting": {
+      "median_ms": 1.749,
+      "p95_ms": 1.996
+    },
+    "PolicyGuard-RAG Optuna": {
+      "median_ms": 2.21,
+      "p95_ms": 2.734
+    }
+  }
+}

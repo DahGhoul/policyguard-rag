@@ -8,5 +8,6 @@ env/
 venv/
 ENV/
 storage/tmp/
+local_reports/
 .DS_Store
 Thumbs.db

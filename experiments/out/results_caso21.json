@@ -1,0 +1,186 @@
+{
+  "n_chunks": 16,
+  "n_policies": 5,
+  "n_queries": 45,
+  "summary": {
+    "Keyword Exacto": {
+      "Hit@1": 0.4667,
+      "Recall@3": 0.6667,
+      "MRR": 0.6104,
+      "nDCG@3": 0.6336,
+      "PolicyHit@1": 0.8
+    },
+    "TF-IDF Coseno": {
+      "Hit@1": 0.6889,
+      "Recall@3": 0.7778,
+      "MRR": 0.7627,
+      "nDCG@3": 0.7432,
+      "PolicyHit@1": 0.8889
+    },
+    "BM25 Okapi": {
+      "Hit@1": 0.6667,
+      "Recall@3": 0.7778,
+      "MRR": 0.7527,
+      "nDCG@3": 0.7358,
+      "PolicyHit@1": 0.8889
+    },
+    "PolicyGuard RAG": {
+      "Hit@1": 0.6667,
+      "Recall@3": 0.7778,
+      "MRR": 0.754,
+      "nDCG@3": 0.7465,
+      "PolicyHit@1": 0.8889
+    }
+  },
+  "latencies_ms": {
+    "Keyword Exacto": {
+      "median": 0.159,
+      "p95": 0.262,
+      "mean": 0.172
+    },
+    "TF-IDF Coseno": {
+      "median": 0.477,
+      "p95": 0.766,
+      "mean": 0.527
+    },
+    "BM25 Okapi": {
+      "median": 0.058,
+      "p95": 0.087,
+      "mean": 0.063
+    },
+    "PolicyGuard RAG": {
+      "median": 1.529,
+      "p95": 1.886,
+      "mean": 1.547
+    }
+  },
+  "contrasts": {
+    "Keyword Exacto": {
+      "delta_mrr": 0.14367114367114367,
+      "ci_95": [
+        0.05292989417989418,
+        0.23669363044363048
+      ],
+      "p_value": 0.003912914119603244
+    },
+    "TF-IDF Coseno": {
+      "delta_mrr": -0.008677248677248676,
+      "ci_95": [
+        -0.05937962962962963,
+        0.039470899470899476
+      ],
+      "p_value": 0.6570847827741971
+    },
+    "BM25 Okapi": {
+      "delta_mrr": 0.001322751322751323,
+      "ci_95": [
+        -0.05371031746031745,
+        0.05634920634920634
+      ],
+      "p_value": 0.5
+    }
+  },
+  "audit_chain": [
+    {
+      "blocks": 100,
+      "ms": 0.67,
+      "throughput_blocks_s": 148302
+    },
+    {
+      "blocks": 500,
+      "ms": 0.34,
+      "throughput_blocks_s": 1487652
+    },
+    {
+      "blocks": 1000,
+      "ms": 0.68,
+      "throughput_blocks_s": 1466921
+    },
+    {
+      "blocks": 2500,
+      "ms": 1.82,
+      "throughput_blocks_s": 1370990
+    },
+    {
+      "blocks": 5000,
+      "ms": 3.57,
+      "throughput_blocks_s": 1400443
+    }
+  ],
+  "dept_adoption": [
+    {
+      "department": "Seguridad TI / CSIRT",
+      "users": 2,
+      "acks": 9,
+      "target": 10,
+      "pct": 90.0
+    },
+    {
+      "department": "TI e Infraestructura",
+      "users": 2,
+      "acks": 8,
+      "target": 10,
+      "pct": 80.0
+    },
+    {
+      "department": "Auditoría y Riesgos",
+      "users": 1,
+      "acks": 4,
+      "target": 5,
+      "pct": 80.0
+    },
+    {
+      "department": "Ingeniería de Software",
+      "users": 2,
+      "acks": 6,
+      "target": 10,
+      "pct": 60.0
+    },
+    {
+      "department": "Finanzas y Tesorería",
+      "users": 1,
+      "acks": 2,
+      "target": 5,
+      "pct": 40.0
+    },
+    {
+      "department": "Recursos Humanos",
+      "users": 1,
+      "acks": 1,
+      "target": 5,
+      "pct": 20.0
+    }
+  ],
+  "by_policy": {
+    "POL-SEG-001": {
+      "Hit@1": 0.5555555555555556,
+      "Recall@3": 0.6666666666666666,
+      "MRR": 0.6621693121693122,
+      "nDCG@3": 0.772248268532204
+    },
+    "POL-SEG-002": {
+      "Hit@1": 0.8888888888888888,
+      "Recall@3": 1.0,
+      "MRR": 0.9444444444444444,
+      "nDCG@3": 0.8401250222879123
+    },
+    "POL-SEG-003": {
+      "Hit@1": 0.5555555555555556,
+      "Recall@3": 0.5555555555555556,
+      "MRR": 0.6040123456790123,
+      "nDCG@3": 0.502263896318193
+    },
+    "POL-SEG-004": {
+      "Hit@1": 0.8888888888888888,
+      "Recall@3": 1.0,
+      "MRR": 0.9444444444444444,
+      "nDCG@3": 0.8667708519065935
+    },
+    "POL-SEG-005": {
+      "Hit@1": 0.4444444444444444,
+      "Recall@3": 0.6666666666666666,
+      "MRR": 0.6150793650793651,
+      "nDCG@3": 0.7511319481590966
+    }
+  }
+}
